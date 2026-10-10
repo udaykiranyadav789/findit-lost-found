@@ -2,8 +2,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 
-const API = "http://localhost:8080/api/items";
-const BACKEND_ORIGIN = "http://localhost:8080";
+// Production backend URL. You can override this using VITE_API_URL.
+const BACKEND_ORIGIN = (
+  import.meta.env.VITE_API_URL ||
+  "https://findit-lost-found-backend-3.onrender.com"
+).replace(/\/+$/, "");
+
+const API = `${BACKEND_ORIGIN}/api/items`;
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
 
 const ALLOWED_IMAGE_TYPES = [
@@ -36,11 +41,22 @@ const announcements = [
   "📍 Include the location to help others identify their items.",
 ];
 
+const emptyForm = {
+  title: "",
+  description: "",
+  category: "",
+  location: "",
+  status: "LOST",
+  contactInfo: "",
+};
+
 function getPhoto(item) {
   if (item.imageUrl) {
     return item.imageUrl.startsWith("http")
       ? item.imageUrl
-      : `${BACKEND_ORIGIN}${item.imageUrl}`;
+      : `${BACKEND_ORIGIN}${
+          item.imageUrl.startsWith("/") ? "" : "/"
+        }${item.imageUrl}`;
   }
 
   const text =
@@ -70,6 +86,21 @@ function getPhoto(item) {
   return "https://images.unsplash.com/photo-1491637639811-60e2756cc1c7?auto=format&fit=crop&w=700&q=80";
 }
 
+function StatCard({ icon, label, value, tone }) {
+  return (
+    <article className="stat-card">
+      <div className={`stat-icon ${tone}`} aria-hidden="true">
+        {icon}
+      </div>
+      <div>
+        <strong>{value}</strong>
+        <p>{label}</p>
+        <small>Based on current active reports</small>
+      </div>
+    </article>
+  );
+}
+
 function App() {
   const [items, setItems] = useState([]);
   const [search, setSearch] = useState("");
@@ -83,22 +114,12 @@ function App() {
   const [activeView, setActiveView] = useState("Home");
   const [announcementIndex, setAnnouncementIndex] = useState(0);
 
-  const emptyForm = {
-    title: "",
-    description: "",
-    category: "",
-    location: "",
-    status: "LOST",
-    contactInfo: "",
-  };
-
-  const [form, setForm] = useState(emptyForm);
-
-  // Photo upload state
+  const [form, setForm] = useState({ ...emptyForm });
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState("");
   const fileInputRef = useRef(null);
 
+  // Load reports from the deployed Spring Boot backend.
   async function loadItems() {
     setLoading(true);
 
@@ -111,11 +132,11 @@ function App() {
 
       const data = await response.json();
       setItems(Array.isArray(data) ? data : []);
+      setMessage("");
     } catch (error) {
       console.error("Loading items failed:", error);
-
       setMessage(
-        "Unable to connect to the server. Make sure Spring Boot is running on port 8080."
+        `Unable to load reports. ${error.message || "Check the backend connection."}`
       );
       setMessageType("error");
     } finally {
@@ -137,7 +158,6 @@ function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  // Release temporary preview URLs when the preview changes.
   useEffect(() => {
     return () => {
       if (imagePreview) {
@@ -146,7 +166,6 @@ function App() {
     };
   }, [imagePreview]);
 
-  // Hide returned items from active reports.
   const activeItems = useMemo(
     () =>
       items.filter(
@@ -199,17 +218,11 @@ function App() {
 
   function updateForm(event) {
     const { name, value } = event.target;
-
-    setForm((current) => ({
-      ...current,
-      [name]: value,
-    }));
+    setForm((current) => ({ ...current, [name]: value }));
   }
 
-  // Validate and preview a selected photo.
   function handleImageChange(event) {
     const file = event.target.files?.[0];
-
     if (!file) return;
 
     if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
@@ -244,7 +257,6 @@ function App() {
     }
   }
 
-  // Mark an item as returned.
   async function handleReturn(item) {
     const confirmed = window.confirm(
       `Mark "${item.title}" as returned? It will disappear from active reports.`
@@ -278,18 +290,10 @@ function App() {
 
       setMessage("Item marked as returned successfully!");
       setMessageType("success");
-
-      await loadItems();
-
-      setMessage("Item marked as returned successfully!");
-      setMessageType("success");
     } catch (error) {
       console.error("Marking item as returned failed:", error);
-
       setMessage(
-        error.message === "Failed to fetch"
-          ? "Could not reach the backend. Check that Spring Boot is running."
-          : `Could not mark the item as returned. ${error.message}`
+        `Could not mark the item as returned. ${error.message}`
       );
       setMessageType("error");
     } finally {
@@ -297,10 +301,8 @@ function App() {
     }
   }
 
-  // Submit the report, with or without a photo.
   async function handleSubmit(event) {
     event.preventDefault();
-
     if (submitting) return;
 
     setMessage("");
@@ -334,9 +336,7 @@ function App() {
       } else {
         response = await fetch(API, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             ...form,
             title: form.title.trim(),
@@ -346,13 +346,11 @@ function App() {
 
       if (!response.ok) {
         const errorText = await response.text();
-
         throw new Error(
           errorText || `Report submission failed (${response.status})`
         );
       }
 
-      // Clear the form after a successful save.
       setForm({ ...emptyForm });
       removePhoto();
 
@@ -366,18 +364,10 @@ function App() {
       setMessageType("success");
       setActiveView("Home");
 
-      window.scrollTo({
-        top: 0,
-        behavior: "smooth",
-      });
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (error) {
       console.error("Report submission failed:", error);
-
-      setMessage(
-        error.message === "Failed to fetch"
-          ? "Could not reach the backend. Check Spring Boot and port 8080."
-          : `Could not submit your report. ${error.message}`
-      );
+      setMessage(`Could not submit your report. ${error.message}`);
       setMessageType("error");
     } finally {
       setSubmitting(false);
@@ -510,7 +500,6 @@ function App() {
                 >
                   📝 Report an Item <span>→</span>
                 </button>
-
                 <button
                   className="outline-button"
                   onClick={() => goTo("Browse Items")}
@@ -530,9 +519,7 @@ function App() {
 
           {message && (
             <div
-              className={`notice ${
-                messageType === "success" ? "success" : ""
-              }`}
+              className={`notice ${messageType === "success" ? "success" : ""}`}
               role="status"
             >
               <span>{message}</span>
@@ -546,30 +533,10 @@ function App() {
           )}
 
           <section className="stats-grid" aria-label="Report statistics">
-            <StatCard
-              icon="📋"
-              label="Active Reports"
-              value={activeItems.length}
-              tone="blue"
-            />
-            <StatCard
-              icon="🔍"
-              label="Lost Items"
-              value={lostCount}
-              tone="orange"
-            />
-            <StatCard
-              icon="🎁"
-              label="Found Items"
-              value={foundCount}
-              tone="green"
-            />
-            <StatCard
-              icon="🗂️"
-              label="Categories"
-              value={categoryCount}
-              tone="purple"
-            />
+            <StatCard icon="📋" label="Active Reports" value={activeItems.length} tone="blue" />
+            <StatCard icon="🔍" label="Lost Items" value={lostCount} tone="orange" />
+            <StatCard icon="🎁" label="Found Items" value={foundCount} tone="green" />
+            <StatCard icon="🗂️" label="Categories" value={categoryCount} tone="purple" />
           </section>
 
           <div className="workspace">
@@ -584,7 +551,6 @@ function App() {
                     Search and discover reports from around your campus.
                   </p>
                 </div>
-
                 <span className="result-count">
                   📄 {filteredItems.length} reports
                 </span>
@@ -599,7 +565,6 @@ function App() {
                     placeholder="Search name, description, location..."
                     aria-label="Search item reports"
                   />
-
                   {search && (
                     <button
                       type="button"
@@ -619,9 +584,7 @@ function App() {
                     aria-label="Filter by category"
                   >
                     {categories.map((value) => (
-                      <option key={value} value={value}>
-                        {value}
-                      </option>
+                      <option key={value} value={value}>{value}</option>
                     ))}
                   </select>
                 </label>
@@ -665,20 +628,14 @@ function App() {
                     Try a different search or clear your filters to see
                     more reports.
                   </p>
-                  <button
-                    className="primary-button"
-                    onClick={clearFilters}
-                  >
+                  <button className="primary-button" onClick={clearFilters}>
                     🔄 Clear Filters
                   </button>
                 </div>
               ) : (
                 <div className="items-grid">
                   {filteredItems.map((item) => {
-                    const itemStatus = String(
-                      item.status || ""
-                    ).toUpperCase();
-
+                    const itemStatus = String(item.status || "").toUpperCase();
                     const isFound = itemStatus === "FOUND";
 
                     return (
@@ -694,46 +651,30 @@ function App() {
                                 "https://images.unsplash.com/photo-1491637639811-60e2756cc1c7?auto=format&fit=crop&w=700&q=80";
                             }}
                           />
-
-                          <span
-                            className={
-                              isFound
-                                ? "status-badge found"
-                                : "status-badge lost"
-                            }
-                          >
+                          <span className={isFound ? "status-badge found" : "status-badge lost"}>
                             {isFound ? "🟢 FOUND" : "🟠 LOST"}
                           </span>
                         </div>
 
                         <div className="item-details">
                           <h3>{item.title || "Untitled item"}</h3>
-
                           <p className="item-meta">
-                            <span>🗂️</span>
-                            {item.category || "Other"}
+                            <span>🗂️</span> {item.category || "Other"}
                           </p>
-
                           <p className="item-meta">
-                            <span>📍</span>
-                            {item.location || "Location not specified"}
+                            <span>📍</span> {item.location || "Location not specified"}
                           </p>
-
                           <p className="item-description">
                             {item.description || "No description provided."}
                           </p>
-
                           <div className="item-contact">
                             <span>💬</span>
-                            <span>
-                              {item.contactInfo || "Contact not provided"}
-                            </span>
+                            <span>{item.contactInfo || "Contact not provided"}</span>
                           </div>
 
                           {item.createdAt && (
                             <p className="item-date">
-                              🕒{" "}
-                              {new Date(item.createdAt).toLocaleDateString()}
+                              🕒 {new Date(item.createdAt).toLocaleDateString()}
                             </p>
                           )}
 
@@ -765,9 +706,7 @@ function App() {
               </div>
 
               <form onSubmit={handleSubmit} className="report-form">
-                <label htmlFor="title">
-                  Item Name <span>*</span>
-                </label>
+                <label htmlFor="title">Item Name <span>*</span></label>
                 <input
                   id="title"
                   name="title"
@@ -777,9 +716,7 @@ function App() {
                   required
                 />
 
-                <label htmlFor="description">
-                  Description <span>*</span>
-                </label>
+                <label htmlFor="description">Description <span>*</span></label>
                 <textarea
                   id="description"
                   name="description"
@@ -789,9 +726,7 @@ function App() {
                   required
                 />
 
-                <label htmlFor="category">
-                  Category <span>*</span>
-                </label>
+                <label htmlFor="category">Category <span>*</span></label>
                 <select
                   id="category"
                   name="category"
@@ -801,15 +736,11 @@ function App() {
                 >
                   <option value="">Select category</option>
                   {categories.slice(1).map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
+                    <option key={value} value={value}>{value}</option>
                   ))}
                 </select>
 
-                <label htmlFor="location">
-                  Location <span>*</span>
-                </label>
+                <label htmlFor="location">Location <span>*</span></label>
                 <input
                   id="location"
                   name="location"
@@ -819,18 +750,9 @@ function App() {
                   required
                 />
 
-                <label>
-                  Report Type <span>*</span>
-                </label>
-
+                <label>Report Type <span>*</span></label>
                 <div className="status-choice">
-                  <label
-                    className={
-                      form.status === "LOST"
-                        ? "choice lost-choice chosen"
-                        : "choice lost-choice"
-                    }
-                  >
+                  <label className={form.status === "LOST" ? "choice lost-choice chosen" : "choice lost-choice"}>
                     <input
                       type="radio"
                       name="status"
@@ -840,14 +762,7 @@ function App() {
                     />
                     <span>🟠</span> Lost
                   </label>
-
-                  <label
-                    className={
-                      form.status === "FOUND"
-                        ? "choice found-choice chosen"
-                        : "choice found-choice"
-                    }
-                  >
+                  <label className={form.status === "FOUND" ? "choice found-choice chosen" : "choice found-choice"}>
                     <input
                       type="radio"
                       name="status"
@@ -886,7 +801,6 @@ function App() {
                 <label htmlFor="itemPhoto">
                   Item Photo <span>(optional)</span>
                 </label>
-
                 <input
                   ref={fileInputRef}
                   id="itemPhoto"
@@ -899,11 +813,7 @@ function App() {
 
                 {imagePreview && (
                   <div className="photo-preview">
-                    <img
-                      src={imagePreview}
-                      alt="Preview of selected item"
-                    />
-
+                    <img src={imagePreview} alt="Preview of selected item" />
                     <button
                       type="button"
                       className="remove-photo"
@@ -943,21 +853,6 @@ function App() {
         </main>
       </div>
     </div>
-  );
-}
-
-function StatCard({ icon, label, value, tone }) {
-  return (
-    <article className="stat-card">
-      <div className={`stat-icon ${tone}`} aria-hidden="true">
-        {icon}
-      </div>
-      <div>
-        <strong>{value}</strong>
-        <p>{label}</p>
-        <small>Based on current active reports</small>
-      </div>
-    </article>
   );
 }
 
